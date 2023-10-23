@@ -23,7 +23,7 @@ struct McilWorker
 
 	pool<Wire*> partial_assignment_wires;
 	dict<SigBit, std::pair<const char*, int>> partial_assignment_bits;
-	vector<string> inputvars, vars, definitions, assignments, invarspecs;
+	vector<string> input_vars, local_vars, output_vars, init_exprs, trans_exprs, inv_exprs;
 
 	const char *cid()
 	{
@@ -190,18 +190,23 @@ struct McilWorker
 
 	void run()
 	{
-		f << stringf("MODULE %s\n", cid(module->name));
+		f << stringf("(check-system %s\n", cid(module->name));
 
 		for (auto wire : module->wires())
 		{
 			if (SigSpec(wire) != sigmap(wire))
 				partial_assignment_wires.insert(wire);
 
+			// if a wire is both input+output, default to the wire being an input to the system
 			if (wire->port_input)
-				inputvars.push_back(stringf("%s : unsigned word[%d]; -- %s", cid(wire->name), wire->width, log_id(wire)));
+				input_vars.push_back(stringf("(%s (_ BitVec %d))", cid(wire->name), wire->width));
+			else if (wire->port_output)
+				output_vars.push_back(stringf("(%s (_ BitVec %d))", cid(wire->name), wire->width));
+			else
+				local_vars.push_back(stringf("(%s (_ BitVec %d))", cid(wire->name), wire->width));
 
 			if (wire->attributes.count(ID::init))
-				assignments.push_back(stringf("init(%s) := %s;", lvalue(wire), rvalue(wire->attributes.at(ID::init))));
+				init_exprs.push_back(stringf("(= %s %s)", cid(wire->name), rvalue(wire->attributes.at(ID::init))));
 		}
 
 		for (auto cell : module->cells())
@@ -213,7 +218,7 @@ struct McilWorker
 				SigSpec sig_a = cell->getPort(ID::A);
 				SigSpec sig_en = cell->getPort(ID::EN);
 
-				invarspecs.push_back(stringf("!bool(%s) | bool(%s);", rvalue(sig_en), rvalue(sig_a)));
+				inv_exprs.push_back(stringf("(or (not %s) %s)", rvalue(sig_en), rvalue(sig_a)));
 
 				continue;
 			}
@@ -317,24 +322,16 @@ struct McilWorker
 				int width = GetSize(cell->getPort(ID::Y));
 				string expr_a, expr_b, op;
 
-				if (cell->type == ID($add))  op = "+";
-				if (cell->type == ID($sub))  op = "-";
-				if (cell->type == ID($mul))  op = "*";
-				if (cell->type == ID($and))  op = "&";
-				if (cell->type == ID($or))   op = "|";
-				if (cell->type == ID($xor))  op = "xor";
-				if (cell->type == ID($xnor)) op = "xnor";
+				if (cell->type == ID($add))  op = "bvadd";
+				if (cell->type == ID($sub))  op = "bvsub";
+				if (cell->type == ID($mul))  op = "bvmul";
+				if (cell->type == ID($and))  op = "bvand";
+				if (cell->type == ID($or))   op = "bvor";
+				if (cell->type == ID($xor))  op = "bvxor";
+				if (cell->type == ID($xnor)) op = "bvxnor";
 
-				if (cell->getParam(ID::A_SIGNED).as_bool())
-				{
-					definitions.push_back(stringf("%s := unsigned(%s %s %s);", lvalue(cell->getPort(ID::Y)),
-							rvalue_s(cell->getPort(ID::A), width), op.c_str(), rvalue_s(cell->getPort(ID::B), width)));
-				}
-				else
-				{
-					definitions.push_back(stringf("%s := %s %s %s;", lvalue(cell->getPort(ID::Y)),
-							rvalue_u(cell->getPort(ID::A), width), op.c_str(), rvalue_u(cell->getPort(ID::B), width)));
-				}
+				inv_exprs.push_back(stringf("(= %s (%s %s %s))", lvalue(cell->getPort(ID::Y)),  
+						op.c_str(), rvalue_s(cell->getPort(ID::A), width), rvalue_s(cell->getPort(ID::B), width)));
 
 				continue;
 			}
@@ -664,9 +661,9 @@ struct McilWorker
 			definitions.push_back(stringf("%s := %s;", cid(wire->name), expr.c_str()));
 		}
 
-		if (!inputvars.empty()) {
+		if (!input_vars.empty()) {
 			f << stringf("  IVAR\n");
-			for (const string &line : inputvars)
+			for (const string &line : input_vars)
 				f << stringf("    %s\n", line.c_str());
 		}
 
