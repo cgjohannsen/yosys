@@ -60,7 +60,7 @@ struct SynthPass : public ScriptPass {
 		log("        do not run abc (as if yosys was compiled without ABC support)\n");
 		log("\n");
 		log("    -booth\n");
-		log("        run the booth pass to convert $mul to Booth encoded multipliers");
+		log("        run the booth pass to map $mul to Booth encoded multipliers\n");
 		log("\n");
 		log("    -noalumacc\n");
 		log("        do not run 'alumacc' pass. i.e. keep arithmetic operators in\n");
@@ -88,6 +88,10 @@ struct SynthPass : public ScriptPass {
 		log("        read/write collision\" (same result as setting the no_rw_check\n");
 		log("        attribute on all memories).\n");
 		log("\n");
+		log("    -extra-map filename\n");
+		log("        source extra rules from the given file to complement the default\n");
+		log("        mapping library in the `techmap` step. this option can be\n");
+		log("        repeated.\n");
 		log("\n");
 		log("The following commands are executed by this synthesis command:\n");
 		help_script();
@@ -96,8 +100,8 @@ struct SynthPass : public ScriptPass {
 
 	string top_module, fsm_opts, memory_opts, abc;
 	bool autotop, flatten, noalumacc, nofsm, noabc, noshare, flowmap, booth;
-
 	int lut;
+	std::vector<std::string> techmap_maps;
 
 	void clear_flags() override
 	{
@@ -115,6 +119,7 @@ struct SynthPass : public ScriptPass {
 		flowmap = false;
 		booth = false;
 		abc = "abc";
+		techmap_maps.clear();
 	}
 
 	void execute(std::vector<std::string> args, RTLIL::Design *design) override
@@ -151,7 +156,7 @@ struct SynthPass : public ScriptPass {
 				flatten = true;
 				continue;
 			}
-			if (args[argidx] == "-lut") {
+			if (args[argidx] == "-lut" && argidx + 1 < args.size()) {
 				lut = atoi(args[++argidx].c_str());
 				continue;
 			}
@@ -192,6 +197,10 @@ struct SynthPass : public ScriptPass {
 				memory_opts += " -no-rw-check";
 				continue;
 			}
+			if (args[argidx] == "-extra-map" && argidx + 1 < args.size()) {
+				techmap_maps.push_back(args[++argidx]);
+				continue;
+			}
 			break;
 		}
 		extra_args(args, argidx, design);
@@ -230,13 +239,13 @@ struct SynthPass : public ScriptPass {
 
 		if (check_label("coarse")) {
 			run("proc");
-			if (help_mode || flatten)
+			if (flatten || help_mode)
 				run("flatten", "  (if -flatten)");
 			run("opt_expr");
 			run("opt_clean");
 			run("check");
 			run("opt -nodffe -nosdff");
-			if (!nofsm)
+			if (!nofsm || help_mode)
 				run("fsm" + fsm_opts, "      (unless -nofsm)");
 			run("opt");
 			run("wreduce");
@@ -246,8 +255,8 @@ struct SynthPass : public ScriptPass {
 				run("techmap -map +/cmp2lut.v -map +/cmp2lcu.v", " (if -lut)");
 			else if (lut)
 				run(stringf("techmap -map +/cmp2lut.v -map +/cmp2lcu.v -D LUT_WIDTH=%d", lut));
-			if (booth)
-				run("booth");
+			if (booth || help_mode)
+				run("booth", "    (if -booth)");
 			if (!noalumacc)
 				run("alumacc", "  (unless -noalumacc)");
 			if (!noshare)
@@ -261,7 +270,17 @@ struct SynthPass : public ScriptPass {
 			run("opt -fast -full");
 			run("memory_map");
 			run("opt -full");
-			run("techmap");
+			if (help_mode) {
+				run("techmap", "                  (unless -extra-map)");	
+				run("techmap -map +/techmap.v -map <inject>", "  (if -extra-map)");
+			} else {
+				std::string techmap_opts;
+				if (!techmap_maps.empty())
+					techmap_opts += " -map +/techmap.v";
+				for (auto fn : techmap_maps)
+					techmap_opts += stringf(" -map %s", fn.c_str());
+				run("techmap" + techmap_opts);
+			}
 			if (help_mode) {
 				run("techmap -map +/gate2lut.v", "(if -noabc and -lut)");
 				run("clean; opt_lut", "           (if -noabc and -lut)");
@@ -274,7 +293,7 @@ struct SynthPass : public ScriptPass {
 			}
 			run("opt -fast");
 
-			if (!noabc && !flowmap) {
+			if ((!noabc && !flowmap) || help_mode) {
 #ifdef YOSYS_ENABLE_ABC
 				if (help_mode) {
 					run(abc + " -fast", "       (unless -noabc, unless -lut)");

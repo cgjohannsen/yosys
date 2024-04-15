@@ -2,12 +2,80 @@
 List of major changes and improvements between releases
 =======================================================
 
-Yosys 0.36 .. Yosys 0.37-dev
+Yosys 0.40 .. Yosys 0.41-dev
 --------------------------
+
+Yosys 0.39 .. Yosys 0.40
+--------------------------
+ * New commands and options
+    - Added option "-vhdl2019" to "read" and "verific" pass. 
+
+ * Various
+    - Major documentation overhaul.
+    - Added port statistics to "stat" command.
+    - Added new formatting features to cxxrtl backend.
+
+ * Verific support
+    - Added better support for VHDL constants import.
+    - Added support for VHDL 2009.
+
+Yosys 0.38 .. Yosys 0.39
+--------------------------
+ * New commands and options
+    - Added option "-extra-map" to "synth" pass. 
+    - Added option "-dont_use" to "dfflibmap" pass.
+    - Added option "-href" to "show" command.
+    - Added option "-noscopeinfo" to "flatten" pass.
+    - Added option "-scopename" to "flatten" pass.
+
+ * SystemVerilog
+    - Added support for packed multidimensional arrays.
+
+ * Various
+    - Added "$scopeinfo" cells to preserve information about
+      the hierarchy during flattening.
+    - Added sequential area output to "stat -liberty".
+    - Added ability to record/replay diagnostics in cxxrtl backend.
+ 
+ * Verific support
+    - Added attributes to module instantiation.
+
+Yosys 0.37 .. Yosys 0.38
+--------------------------
+ * New commands and options
+    - Added option "-tech" to "opt_lut" pass.
+    - Added option "-nokeep_prints" to "hierarchy" pass.
+    - Added option "-nolower" to "async2sync" and "clk2fflogic" pass.
+    - Added option "-lower" to "chformal" pass.
+
+ * Various
+    - Added $check cell to represent assertions with messages.
+    - Allow capturing $print cell output in CXXRTL.
+    - Added API to overwrite existing pass from plugin.
+    - Follow the XDG Base Directory Specification for storing history files.
+    - Without a known top module, derive all deferred modules (hierarchy pass).
+    - Detect and error out on combinational loops in write_aiger.
+
+ * Verific support
+    - Added option "-no-split-complex-ports" to "verific -import".
+
+Yosys 0.36 .. Yosys 0.37
+--------------------------
+ * New commands and options
+    - Added option "-nodisplay" to read_verilog.
+
+ * SystemVerilog
+    - Correct hierarchical path names for structs and unions.
+
+ * Various
+    - Print hierarchy for failed assertions in "sim" pass.
+    - Add "--present-only" option to "yosys-witness" to omit unused signals.
+    - Implement a generic record/replay interface for CXXRTL.
+    - Improved readability of emitted code with "write_verilog".
 
 Yosys 0.35 .. Yosys 0.36
 --------------------------
-* New commands and options
+ * New commands and options
     - Added option "--" to pass arguments down to tcl when using -c option.
     - Added ability on MacOS and Windows to pass options after arguments on cli.
     - Added option "-cmp2softlogic" to synth_lattice.

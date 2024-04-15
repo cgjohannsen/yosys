@@ -45,7 +45,7 @@ namespace AST {
 
 // instantiate global variables (private API)
 namespace AST_INTERNAL {
-	bool flag_dump_ast1, flag_dump_ast2, flag_no_dump_ptr, flag_dump_vlog1, flag_dump_vlog2, flag_dump_rtlil, flag_nolatches, flag_nomeminit;
+	bool flag_nodisplay, flag_dump_ast1, flag_dump_ast2, flag_no_dump_ptr, flag_dump_vlog1, flag_dump_vlog2, flag_dump_rtlil, flag_nolatches, flag_nomeminit;
 	bool flag_nomem2reg, flag_mem2reg, flag_noblackbox, flag_lib, flag_nowb, flag_noopt, flag_icells, flag_pwires, flag_autowire;
 	AstNode *current_ast, *current_ast_mod;
 	std::map<std::string, AstNode*> current_scope;
@@ -224,6 +224,7 @@ AstNode::AstNode(AstNodeType type, AstNode *child1, AstNode *child2, AstNode *ch
 	port_id = 0;
 	range_left = -1;
 	range_right = 0;
+	unpacked_dimensions = 0;
 	integer = 0;
 	realvalue = 0;
 	id2ast = NULL;
@@ -349,17 +350,15 @@ void AstNode::dumpAst(FILE *f, std::string indent) const
 		fprintf(f, " int=%u", (int)integer);
 	if (realvalue != 0)
 		fprintf(f, " real=%e", realvalue);
-	if (!multirange_dimensions.empty()) {
-		fprintf(f, " multirange=[");
-		for (int v : multirange_dimensions)
-			fprintf(f, " %d", v);
-		fprintf(f, " ]");
-	}
-	if (!multirange_swapped.empty()) {
-		fprintf(f, " multirange_swapped=[");
-		for (bool v : multirange_swapped)
-			fprintf(f, " %d", v);
-		fprintf(f, " ]");
+	if (!dimensions.empty()) {
+		fprintf(f, " dimensions=");
+		for (auto &dim : dimensions) {
+			int left = dim.range_right + dim.range_width - 1;
+			int right = dim.range_right;
+			if (dim.range_swapped)
+				std::swap(left, right);
+			fprintf(f, "[%d:%d]", left, right);
+		}
 	}
 	if (is_enum) {
 		fprintf(f, " type=enum");
@@ -489,6 +488,20 @@ void AstNode::dumpVlog(FILE *f, std::string indent) const
 		fprintf(f, ";\n");
 		break;
 
+	if (0) { case AST_MEMRD:   txt = "@memrd@";  }
+	if (0) { case AST_MEMINIT: txt = "@meminit@";  }
+	if (0) { case AST_MEMWR:   txt = "@memwr@";  }
+		fprintf(f, "%s%s", indent.c_str(), txt.c_str());
+		for (auto child : children) {
+			fprintf(f, first ? "(" : ", ");
+			child->dumpVlog(f, "");
+			first = false;
+		}
+		fprintf(f, ")");
+		if (type != AST_MEMRD)
+			fprintf(f, ";\n");
+		break;
+
 	case AST_RANGE:
 		if (range_valid) {
 			if (range_swapped)
@@ -503,6 +516,11 @@ void AstNode::dumpVlog(FILE *f, std::string indent) const
 			}
 			fprintf(f, "]");
 		}
+		break;
+
+	case AST_MULTIRANGE:
+		for (auto child : children)
+			child->dumpVlog(f, "");
 		break;
 
 	case AST_ALWAYS:
@@ -542,7 +560,7 @@ void AstNode::dumpVlog(FILE *f, std::string indent) const
 
 	case AST_IDENTIFIER:
 		{
-			AST::AstNode *member_node = AST::get_struct_member(this);
+			AstNode *member_node = get_struct_member();
 			if (member_node)
 				fprintf(f, "%s[%d:%d]", id2vl(str).c_str(), member_node->range_left, member_node->range_right);
 			else
@@ -550,6 +568,12 @@ void AstNode::dumpVlog(FILE *f, std::string indent) const
 		}
 		for (auto child : children)
 			child->dumpVlog(f, "");
+		break;
+
+	case AST_STRUCT:
+	case AST_UNION:
+	case AST_STRUCT_ITEM:
+		fprintf(f, "%s", id2vl(str).c_str());
 		break;
 
 	case AST_CONSTANT:
@@ -658,8 +682,17 @@ void AstNode::dumpVlog(FILE *f, std::string indent) const
 	if (0) { case AST_NEG:         txt = "-";  }
 	if (0) { case AST_LOGIC_NOT:   txt = "!";  }
 	if (0) { case AST_SELFSZ:      txt = "@selfsz@";  }
+	if (0) { case AST_TO_SIGNED:   txt = "signed'";  }
+	if (0) { case AST_TO_UNSIGNED: txt = "unsigned'";  }
 		fprintf(f, "%s(", txt.c_str());
 		children[0]->dumpVlog(f, "");
+		fprintf(f, ")");
+		break;
+
+	case AST_CAST_SIZE:
+		children[0]->dumpVlog(f, "");
+		fprintf(f, "'(");
+		children[1]->dumpVlog(f, "");
 		fprintf(f, ")");
 		break;
 
@@ -839,6 +872,25 @@ AstNode *AstNode::mkconst_str(const std::string &str)
 	node->is_string = true;
 	node->str = str;
 	return node;
+}
+
+// create a temporary register
+AstNode *AstNode::mktemp_logic(const std::string &name, AstNode *mod, bool nosync, int range_left, int range_right, bool is_signed)
+{
+	AstNode *wire = new AstNode(AST_WIRE, new AstNode(AST_RANGE, mkconst_int(range_left, true), mkconst_int(range_right, true)));
+	wire->str = stringf("%s%s:%d$%d", name.c_str(), RTLIL::encode_filename(filename).c_str(), location.first_line, autoidx++);
+	if (nosync)
+		wire->set_attribute(ID::nosync, AstNode::mkconst_int(1, false));
+	wire->is_signed = is_signed;
+	wire->is_logic = true;
+	mod->children.push_back(wire);
+	while (wire->simplify(true, 1, -1, false)) { }
+
+	AstNode *ident = new AstNode(AST_IDENTIFIER);
+	ident->str = wire->str;
+	ident->id2ast = wire;
+
+	return ident;
 }
 
 bool AstNode::bits_only_01() const
@@ -1292,11 +1344,12 @@ static void rename_in_package_stmts(AstNode *pkg)
 }
 
 // create AstModule instances for all modules in the AST tree and add them to 'design'
-void AST::process(RTLIL::Design *design, AstNode *ast, bool dump_ast1, bool dump_ast2, bool no_dump_ptr, bool dump_vlog1, bool dump_vlog2, bool dump_rtlil,
+void AST::process(RTLIL::Design *design, AstNode *ast, bool nodisplay, bool dump_ast1, bool dump_ast2, bool no_dump_ptr, bool dump_vlog1, bool dump_vlog2, bool dump_rtlil,
 		bool nolatches, bool nomeminit, bool nomem2reg, bool mem2reg, bool noblackbox, bool lib, bool nowb, bool noopt, bool icells, bool pwires, bool nooverwrite, bool overwrite, bool defer, bool autowire)
 {
 	current_ast = ast;
 	current_ast_mod = nullptr;
+	flag_nodisplay = nodisplay;
 	flag_dump_ast1 = dump_ast1;
 	flag_dump_ast2 = dump_ast2;
 	flag_no_dump_ptr = no_dump_ptr;
@@ -1767,7 +1820,7 @@ std::string AstModule::derive_common(RTLIL::Design *design, const dict<RTLIL::Id
 
 	AstNode *new_ast = ast->clone();
 	if (!new_ast->attributes.count(ID::hdlname))
-		new_ast->set_attribute(ID::hdlname, AstNode::mkconst_str(stripped_name));
+		new_ast->set_attribute(ID::hdlname, AstNode::mkconst_str(stripped_name.substr(1)));
 
 	para_counter = 0;
 	for (auto child : new_ast->children) {

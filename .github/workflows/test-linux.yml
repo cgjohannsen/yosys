@@ -79,19 +79,21 @@ jobs:
           $CXX --version
 
       - name: Checkout Yosys
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Get iverilog
         shell: bash
         run: |
           git clone https://github.com/steveicarus/iverilog.git
+          cd iverilog
+          echo "IVERILOG_GIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
       - name: Cache iverilog
         id: cache-iverilog
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: .local/
-          key: ${{ matrix.os.id }}-${{ hashFiles('iverilog/.git/refs/heads/master') }}
+          key: ${{ matrix.os.id }}-${{ env.IVERILOG_GIT }}
 
       - name: Build iverilog
         if: steps.cache-iverilog.outputs.cache-hit != 'true'
@@ -108,10 +110,21 @@ jobs:
         shell: bash
         run: |
           make config-${CC%%-*}
-          make -j${{ env.procs }} CCXXSTD=${{ matrix.cpp_std }} CC=$CC CXX=$CC LD=$CC
+          make -j${{ env.procs }} CXXSTD=${{ matrix.cpp_std }} CC=$CC CXX=$CC LD=$CC
+
+      - name: Store build artifact
+        if: (matrix.cpp_std == 'c++11') && (matrix.compiler == 'gcc-11')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-yosys
+          path: yosys
 
       - name: Run tests
         if: (matrix.cpp_std == 'c++11') && (matrix.compiler == 'gcc-11')
         shell: bash
         run: |
           make -j${{ env.procs }} test CXXSTD=${{ matrix.cpp_std }} CC=$CC CXX=$CC LD=$CC
+
+      - name: Log yosys-config output
+        run: |
+          ./yosys-config || true

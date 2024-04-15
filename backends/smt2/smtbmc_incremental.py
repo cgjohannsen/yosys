@@ -15,6 +15,14 @@ class InteractiveError(Exception):
     pass
 
 
+def mkkey(data):
+    if isinstance(data, list):
+        return tuple(map(mkkey, data))
+    elif isinstance(data, dict):
+        raise InteractiveError(f"JSON objects found in assumption key: {data!r}")
+    return data
+
+
 class Incremental:
     def __init__(self):
         self.traceidx = 0
@@ -73,17 +81,17 @@ class Incremental:
 
         if min_len is not None and arg_len < min_len:
             if min_len == max_len:
-                raise (
+                raise InteractiveError(
                     f"{json.dumps(expr[0])} expression must have "
                     f"{min_len} argument{'s' if min_len != 1 else ''}"
                 )
             else:
-                raise (
+                raise InteractiveError(
                     f"{json.dumps(expr[0])} expression must have at least "
                     f"{min_len} argument{'s' if min_len != 1 else ''}"
                 )
         if max_len is not None and arg_len > max_len:
-            raise (
+            raise InteractiveError(
                 f"{json.dumps(expr[0])} expression can have at most "
                 f"{min_len} argument{'s' if max_len != 1 else ''}"
             )
@@ -96,14 +104,31 @@ class Incremental:
         smt_out.append(f"s{step}")
         return "module", smtbmc.topmod
 
-    def expr_mod_constraint(self, expr, smt_out):
-        self.expr_arg_len(expr, 1)
+    def expr_cell(self, expr, smt_out):
+        self.expr_arg_len(expr, 2)
         position = len(smt_out)
         smt_out.append(None)
-        arg_sort = self.expr(expr[1], smt_out, required_sort=["module", None])
+        arg_sort = self.expr(expr[2], smt_out, required_sort=["module", None])
+        smt_out.append(")")
         module = arg_sort[1]
+        cell = expr[1]
+        submod = smtbmc.smt.modinfo[module].cells.get(cell)
+        if submod is None:
+            raise InteractiveError(f"module {module!r} has no cell {cell!r}")
+        smt_out[position] = f"(|{module}_h {cell}| "
+        return ("module", submod)
+
+    def expr_mod_constraint(self, expr, smt_out):
         suffix = expr[0][3:]
-        smt_out[position] = f"(|{module}{suffix}| "
+        self.expr_arg_len(expr, 1, 2 if suffix in ["_a", "_u", "_c"] else 1)
+        position = len(smt_out)
+        smt_out.append(None)
+        arg_sort = self.expr(expr[-1], smt_out, required_sort=["module", None])
+        module = arg_sort[1]
+        if len(expr) == 3:
+            smt_out[position] = f"(|{module}{suffix} {expr[1]}| "
+        else:
+            smt_out[position] = f"(|{module}{suffix}| "
         smt_out.append(")")
         return "Bool"
 
@@ -194,27 +219,48 @@ class Incremental:
 
         return "Bool"
 
+    def expr_smtlib(self, expr, smt_out):
+        self.expr_arg_len(expr, 2)
+
+        smtlib_expr = expr[1]
+        sort = expr[2]
+
+        if not isinstance(smtlib_expr, str):
+            raise InteractiveError(
+                "raw SMT-LIB expression has to be a string, "
+                f"got {json.dumps(smtlib_expr)}"
+            )
+
+        if not isinstance(sort, str):
+            raise InteractiveError(
+                f"raw SMT-LIB sort has to be a string, got {json.dumps(sort)}"
+            )
+
+        smt_out.append(smtlib_expr)
+        return sort
+
     def expr_label(self, expr, smt_out):
         if len(expr) != 3:
-            raise InteractiveError(f'expected ["!", label, sub_expr], got {expr!r}')
+            raise InteractiveError(
+                f'expected ["!", label, sub_expr], got {json.dumps(expr)}'
+            )
         label = expr[1]
         subexpr = expr[2]
 
         if not isinstance(label, str):
-            raise InteractiveError(f"expression label has to be a string")
+            raise InteractiveError("expression label has to be a string")
 
         smt_out.append("(! ")
-        smt_out.appedd(label)
-        smt_out.append(" ")
-
         sort = self.expr(subexpr, smt_out)
-
+        smt_out.append(" :named ")
+        smt_out.append(label)
         smt_out.append(")")
 
         return sort
 
     expr_handlers = {
         "step": expr_step,
+        "cell": expr_cell,
         "mod_h": expr_mod_constraint,
         "mod_is": expr_mod_constraint,
         "mod_i": expr_mod_constraint,
@@ -226,6 +272,7 @@ class Incremental:
         "or": expr_andor,
         "=": expr_eq,
         "yw": expr_yw,
+        "smtlib": expr_smtlib,
         "!": expr_label,
     }
 
@@ -251,7 +298,8 @@ class Incremental:
                         )
                     ):
                         raise InteractiveError(
-                            f"required sort {json.dumps(required_sort)} found sort {json.dumps(sort)}"
+                            f"required sort {json.dumps(required_sort)} "
+                            f"found sort {json.dumps(sort)}"
                         )
             return sort
         raise InteractiveError(f"unknown expression {json.dumps(expr[0])}")
@@ -278,6 +326,30 @@ class Incremental:
 
         assert_fn(self.expr_smt(cmd.get("expr"), "Bool"))
 
+    def cmd_assert_design_assumes(self, cmd):
+        step = self.arg_step(cmd)
+        smtbmc.smt_assert_design_assumes(step)
+
+    def cmd_get_design_assume(self, cmd):
+        key = mkkey(cmd.get("key"))
+        return smtbmc.assume_enables.get(key)
+
+    def cmd_update_assumptions(self, cmd):
+        expr = cmd.get("expr")
+        key = cmd.get("key")
+
+
+        key = mkkey(key)
+
+        result = smtbmc.smt.smt2_assumptions.pop(key, None)
+        if expr is not None:
+            expr = self.expr_smt(expr, "Bool")
+            smtbmc.smt.smt2_assumptions[key] = expr
+        return result
+
+    def cmd_get_unsat_assumptions(self, cmd):
+        return smtbmc.smt.get_unsat_assumptions(minimize=bool(cmd.get('minimize')))
+
     def cmd_push(self, cmd):
         smtbmc.smt_push()
 
@@ -286,6 +358,17 @@ class Incremental:
 
     def cmd_check(self, cmd):
         return smtbmc.smt_check_sat()
+
+    def cmd_smtlib(self, cmd):
+        command = cmd.get("command")
+        response = cmd.get("response", False)
+        if not isinstance(command, str):
+            raise InteractiveError(
+                f"raw SMT-LIB command must be a string, found {json.dumps(command)}"
+            )
+        smtbmc.smt.write(command)
+        if response:
+            return smtbmc.smt.read()
 
     def cmd_design_hierwitness(self, cmd=None):
         allregs = (cmd is None) or bool(cmd.get("allreges", False))
@@ -326,12 +409,31 @@ class Incremental:
 
         map_steps = {i: int(j) for i, j in enumerate(steps)}
 
-        smtbmc.ywfile_constraints(path, constraints, map_steps=map_steps, skip_x=skip_x)
+        last_step = smtbmc.ywfile_constraints(
+            path, constraints, map_steps=map_steps, skip_x=skip_x
+        )
 
         self._yw_constraints[name] = {
             map_steps.get(i, i): [smtexpr for cexfile, smtexpr in constraint_list]
             for i, constraint_list in constraints.items()
         }
+
+        return dict(last_step=last_step)
+
+    def cmd_modinfo(self, cmd):
+        fields = cmd.get("fields", [])
+
+        mod = cmd.get("mod")
+        if mod is None:
+            mod = smtbmc.topmod
+        modinfo = smtbmc.smt.modinfo.get(mod)
+        if modinfo is None:
+            return None
+
+        result = dict(name=mod)
+        for field in fields:
+            result[field] = getattr(modinfo, field, None)
+        return result
 
     def cmd_ping(self, cmd):
         return cmd
@@ -341,12 +443,18 @@ class Incremental:
         "assert": cmd_assert,
         "assert_antecedent": cmd_assert,
         "assert_consequent": cmd_assert,
+        "assert_design_assumes": cmd_assert_design_assumes,
+        "get_design_assume": cmd_get_design_assume,
+        "update_assumptions": cmd_update_assumptions,
+        "get_unsat_assumptions": cmd_get_unsat_assumptions,
         "push": cmd_push,
         "pop": cmd_pop,
         "check": cmd_check,
+        "smtlib": cmd_smtlib,
         "design_hierwitness": cmd_design_hierwitness,
         "write_yw_trace": cmd_write_yw_trace,
         "read_yw_trace": cmd_read_yw_trace,
+        "modinfo": cmd_modinfo,
         "ping": cmd_ping,
     }
 

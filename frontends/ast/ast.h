@@ -202,9 +202,17 @@ namespace AST
 		// set for IDs typed to an enumeration, not used
 		bool is_enum;
 
-		// if this is a multirange memory then this vector contains offset and length of each dimension
-		std::vector<int> multirange_dimensions;
-		std::vector<bool> multirange_swapped; // true if range is swapped
+		// Declared range for array dimension.
+		struct dimension_t {
+			int range_right;     // lsb in [msb:lsb]
+			int range_width;     // msb - lsb + 1
+			bool range_swapped;  // if the declared msb < lsb, msb and lsb above are swapped
+		};
+		// Packed and unpacked dimensions for arrays.
+		// Unpacked dimensions go first, to follow the order of indexing.
+		std::vector<dimension_t> dimensions;
+		// Number of unpacked dimensions.
+		int unpacked_dimensions;
 
 		// this is set by simplify and used during RTLIL generation
 		AstNode *id2ast;
@@ -287,7 +295,7 @@ namespace AST
 		bool is_simple_const_expr();
 
 		// helper for parsing format strings
-		Fmt processFormat(int stage, bool sformat_like, int default_base = 10, size_t first_arg_at = 0);
+		Fmt processFormat(int stage, bool sformat_like, int default_base = 10, size_t first_arg_at = 0, bool may_fail = false);
 
 		bool is_recursive_function() const;
 		std::pair<AstNode*, AstNode*> get_tern_choice();
@@ -320,6 +328,9 @@ namespace AST
 		static AstNode *mkconst_bits(const std::vector<RTLIL::State> &v, bool is_signed);
 		static AstNode *mkconst_str(const std::vector<RTLIL::State> &v);
 		static AstNode *mkconst_str(const std::string &str);
+
+		// helper function to create an AST node for a temporary register
+		AstNode *mktemp_logic(const std::string &name, AstNode *mod, bool nosync, int range_left, int range_right, bool is_signed);
 
 		// helper function for creating sign-extended const objects
 		RTLIL::Const bitsAsConst(int width, bool is_signed);
@@ -368,12 +379,16 @@ namespace AST
 		// localized fixups after modifying children/attributes of a particular node
 		void fixup_hierarchy_flags(bool force_descend = false);
 
+		// helpers for indexing
+		AstNode *make_index_range(AstNode *node, bool unpacked_range = false);
+		AstNode *get_struct_member() const;
+
 		// helper to print errors from simplify/genrtlil code
 		[[noreturn]] void input_error(const char *format, ...) const YS_ATTRIBUTE(format(printf, 2, 3));
 	};
 
 	// process an AST tree (ast must point to an AST_DESIGN node) and generate RTLIL code
-	void process(RTLIL::Design *design, AstNode *ast, bool dump_ast1, bool dump_ast2, bool no_dump_ptr, bool dump_vlog1, bool dump_vlog2, bool dump_rtlil, bool nolatches, bool nomeminit,
+	void process(RTLIL::Design *design, AstNode *ast, bool nodisplay, bool dump_ast1, bool dump_ast2, bool no_dump_ptr, bool dump_vlog1, bool dump_vlog2, bool dump_rtlil, bool nolatches, bool nomeminit,
 			bool nomem2reg, bool mem2reg, bool noblackbox, bool lib, bool nowb, bool noopt, bool icells, bool pwires, bool nooverwrite, bool overwrite, bool defer, bool autowire);
 
 	// parametric modules are supported directly by the AST library
@@ -413,10 +428,6 @@ namespace AST
 	// Helper for setting the src attribute.
 	void set_src_attr(RTLIL::AttrObject *obj, const AstNode *ast);
 
-	// struct helper exposed from simplify for genrtlil
-	AstNode *make_struct_member_range(AstNode *node, AstNode *member_node);
-	AstNode *get_struct_member(const AstNode *node);
-
 	// generate standard $paramod... derived module name; parameters should be
 	// in the order they are declared in the instantiated module
 	std::string derived_module_name(std::string stripped_name, const std::vector<std::pair<RTLIL::IdString, RTLIL::Const>> &parameters);
@@ -429,7 +440,7 @@ namespace AST
 namespace AST_INTERNAL
 {
 	// internal state variables
-	extern bool flag_dump_ast1, flag_dump_ast2, flag_no_dump_ptr, flag_dump_rtlil, flag_nolatches, flag_nomeminit;
+	extern bool flag_nodisplay, flag_dump_ast1, flag_dump_ast2, flag_no_dump_ptr, flag_dump_rtlil, flag_nolatches, flag_nomeminit;
 	extern bool flag_nomem2reg, flag_mem2reg, flag_lib, flag_noopt, flag_icells, flag_pwires, flag_autowire;
 	extern AST::AstNode *current_ast, *current_ast_mod;
 	extern std::map<std::string, AST::AstNode*> current_scope;
