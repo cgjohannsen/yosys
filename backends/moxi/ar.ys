@@ -1,0 +1,8 @@
+read_verilog -formal ar.v
+hierarchy
+proc
+opt
+memory -nordff -nomap
+chformal -lower
+dffunmap
+write_moxi ar.moxi
