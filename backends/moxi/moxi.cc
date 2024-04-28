@@ -20,30 +20,6 @@ struct MoxiVar {
 	MoxiVar(const std::string &name, MoxiVarType var_type, const std::string &sort) : name(name), var_type(var_type), sort(sort) {}
 };
 
-/*
-* Add each wire in `module` to `var_map`, adding initialization to `init_exprs` if needed.
-*/
-void export_wires()
-{
-	
-}
-
-/*
-	* Add `cell` property (reach, assume, fair) to exprs.
-	*/ 
-void export_formal_cell(RTLIL::Cell *cell)
-{
-
-}
-
-/*
-	* Add `cell` property (reach, assume, fair) to exprs.
-	*/ 
-void export_shift_cell(RTLIL::Cell *cell)
-{
-
-}
-
 struct MoxiWorker {
 	SigMap sigmap;
 	RTLIL::Module *module;
@@ -88,24 +64,52 @@ struct MoxiWorker {
 		return bit.data == RTLIL::S1 ? "true" : "false";
 	}
 
-	// Returns a string in MoXI syntax representing `sig` as a bit vector
-	std::string get_moxi_bv(RTLIL::SigSpec &sig)
+	// Returns a string in MoXI syntax representing `sig` as a bit vector. If `sig` is a wire, then
+	// does a lookup of `sig` in `var_map`, otherwise builds a string using `sig`s chunks that
+	// concats each chunk together.
+	std::string get_moxi_bitvec(RTLIL::SigSpec &sig)
 	{
-		std::string moxi_bv;
 		sigmap.apply(sig);
 
-		if (sig.is_wire()) {
+		if (sig.is_wire()) 
+		{
 			return get_moxi_var_name(sig);
 		}
 
-		for (auto &chunk : sig.chunks()) {
-			if (chunk.is_wire()) {
-
+		std::vector<std::string> exprs;
+		for (auto &chunk : sig.chunks()) 
+		{
+			if (chunk.is_wire()) 
+			{
+				exprs.push_back(get_moxi_var_name(sig));
 				continue;
 			}
+
+			std::string bitvec = "#b";
+			for (auto state = chunk.data.rbegin(); state != chunk.data.rend(); ++state) 
+			{
+				bitvec += (*state == RTLIL::S1) ? "1" : "0";
+			}
+			exprs.push_back(bitvec);
 		}
 
-		return moxi_bv;
+		if (GetSize(exprs) == 0)
+		{
+			log_error("%s has no chunks.\n", sig.as_string().c_str());
+			return "ERROR";
+		}
+		if (GetSize(exprs) == 1)
+		{
+			return exprs[0];
+		}
+
+		std::string moxi_bitvec = exprs.back();
+		for (auto expr = ++(exprs.rbegin()); expr != exprs.rend(); ++expr)
+		{
+			moxi_bitvec = stringf("(concat %s %s)", moxi_bitvec.c_str(), (*expr).c_str());
+		}
+
+		return moxi_bitvec;
 	}
 
 	void run()
@@ -191,8 +195,8 @@ struct MoxiWorker {
 				if (cell->type == ID($xnor))
 					op = "bvxnor";
 
-				string expr = stringf("(= (%s %s %s) %s)", op.c_str(), get_moxi_bv(sig_a).c_str(), get_moxi_bv(sig_b).c_str(),
-						      get_moxi_bv(sig_y).c_str());
+				string expr = stringf("(= (%s %s %s) %s)", op.c_str(), get_moxi_bitvec(sig_a).c_str(), get_moxi_bitvec(sig_b).c_str(),
+						      get_moxi_bitvec(sig_y).c_str());
 				inv_exprs.push_back(expr);
 
 				continue;
@@ -230,8 +234,8 @@ struct MoxiWorker {
 				if (cell->type == ID($gt))
 					op = "bvgt";
 
-				string expr = stringf("(= (%s %s %s) %s)", op.c_str(), get_moxi_bv(sig_a).c_str(), get_moxi_bv(sig_b).c_str(),
-						      get_moxi_bv(sig_y).c_str());
+				string expr = stringf("(= (%s %s %s) %s)", op.c_str(), get_moxi_bitvec(sig_a).c_str(), get_moxi_bitvec(sig_b).c_str(),
+						      get_moxi_bitvec(sig_y).c_str());
 				inv_exprs.push_back(expr);
 
 				continue;
@@ -274,7 +278,7 @@ struct MoxiWorker {
 
 				var_map.emplace(cell->name, MoxiVar(cell->name.str(), LOCAL, stringf("(_ BitVec %d)", GetSize(sig_d))));
 
-				string expr = stringf("(= %s' %s)", get_moxi_bv(sig_q).c_str(), get_moxi_bv(sig_d).c_str());
+				string expr = stringf("(= %s' %s)", get_moxi_bitvec(sig_q).c_str(), get_moxi_bitvec(sig_d).c_str());
 				trans_exprs.push_back(expr);
 
 				continue;
