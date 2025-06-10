@@ -1,9 +1,9 @@
 Techmap by example
 ------------------
 
-As a quick recap, the :cmd:ref:`techmap` command replaces cells in the design
-with implementations given as Verilog code (called "map files"). It can replace
-Yosys' internal cell types (such as ``$or``) as well as user-defined cell types.
+As a quick recap, the `techmap` command replaces cells in the design with
+implementations given as Verilog code (called "map files"). It can replace
+Yosys' internal cell types (such as `$or`) as well as user-defined cell types.
 
 - Verilog parameters are used extensively to customize the internal cell types.
 - Additional special parameters are used by techmap to communicate meta-data to
@@ -34,7 +34,7 @@ Mapping OR3X1
    :caption: :file:`red_or3x1_map.v`
 
 .. figure:: /_images/code_examples/techmap/red_or3x1.*
-    :class: width-helper
+    :class: width-helper invert-helper
 
 .. literalinclude:: /code_examples/techmap/red_or3x1_test.ys
    :language: yoscrypt
@@ -61,7 +61,7 @@ Conditional techmap
 Example:
 
 .. figure:: /_images/code_examples/techmap/sym_mul.*
-    :class: width-helper
+    :class: width-helper invert-helper
 
 .. literalinclude:: /code_examples/techmap/sym_mul_map.v
    :language: verilog
@@ -87,20 +87,20 @@ Scripting in map modules
 - You can even call techmap recursively!
 - Example use-cases:
 
-    - Using always blocks in map module: call :cmd:ref:`proc`
-    - Perform expensive optimizations (such as :cmd:ref:`freduce`) on cells
+    - Using always blocks in map module: call `proc`
+    - Perform expensive optimizations (such as `freduce`) on cells
       where this is known to work well.
     - Interacting with custom commands.
 
 .. note:: PROTIP:
 
-    Commands such as :cmd:ref:`shell`, ``show -pause``, and :cmd:ref:`dump` can
-    be used in the ``_TECHMAP_DO_*`` scripts for debugging map modules.
+    Commands such as `shell`, ``show -pause``, and `dump` can be used in the
+    ``_TECHMAP_DO_*`` scripts for debugging map modules.
 
 Example:
 
 .. figure:: /_images/code_examples/techmap/mymul.*
-    :class: width-helper
+    :class: width-helper invert-helper
 
 .. literalinclude:: /code_examples/techmap/mymul_map.v
    :language: verilog
@@ -130,7 +130,7 @@ Handling constant inputs
 Example:
 
 .. figure:: /_images/code_examples/techmap/mulshift.*
-    :class: width-helper
+    :class: width-helper invert-helper
 
 .. literalinclude:: /code_examples/techmap/mulshift_map.v
    :language: verilog
@@ -162,7 +162,7 @@ Handling shorted inputs
 Example:
 
 .. figure:: /_images/code_examples/techmap/addshift.*
-    :class: width-helper
+    :class: width-helper invert-helper
 
 .. literalinclude:: /code_examples/techmap/addshift_map.v
    :language: verilog

@@ -336,6 +336,11 @@ struct TechmapWorker
 
 			if (c->type.begins_with("\\$"))
 				c->type = c->type.substr(1);
+			
+			if (c->type == ID::_TECHMAP_PLACEHOLDER_ && tpl_cell->has_attribute(ID::techmap_chtype)) {
+				c->type = RTLIL::escape_id(tpl_cell->get_string_attribute(ID::techmap_chtype));
+				c->attributes.erase(ID::techmap_chtype);
+			}
 
 			vector<IdString> autopurge_ports;
 
@@ -549,8 +554,8 @@ struct TechmapWorker
 
 							if (extmapper_name == "maccmap") {
 								log("Creating %s with maccmap.\n", log_id(extmapper_module));
-								if (extmapper_cell->type != ID($macc))
-									log_error("The maccmap mapper can only map $macc (not %s) cells!\n", log_id(extmapper_cell->type));
+								if (!extmapper_cell->type.in(ID($macc), ID($macc_v2)))
+									log_error("The maccmap mapper can only map $macc/$macc_v2 (not %s) cells!\n", log_id(extmapper_cell->type));
 								maccmap(extmapper_module, extmapper_cell);
 								extmapper_module->remove(extmapper_cell);
 							}
@@ -595,8 +600,8 @@ struct TechmapWorker
 						}
 
 						if (extmapper_name == "maccmap") {
-							if (cell->type != ID($macc))
-								log_error("The maccmap mapper can only map $macc (not %s) cells!\n", log_id(cell->type));
+							if (!cell->type.in(ID($macc), ID($macc_v2)))
+								log_error("The maccmap mapper can only map $macc/$macc_v2 (not %s) cells!\n", log_id(cell->type));
 							maccmap(module, cell);
 						}
 
@@ -679,7 +684,7 @@ struct TechmapWorker
 							for (auto &bit : sigmap(conn.second)) {
 								int val = unique_bit_id.at(bit);
 								for (int i = 0; i < bits; i++) {
-									value.bits.push_back((val & 1) != 0 ? State::S1 : State::S0);
+									value.bits().push_back((val & 1) != 0 ? State::S1 : State::S0);
 									val = val >> 1;
 								}
 							}
@@ -1023,6 +1028,9 @@ struct TechmapPass : public Pass {
 		log("        map file. Note that the Verilog frontend is also called with the\n");
 		log("        '-nooverwrite' option set.\n");
 		log("\n");
+		log("    -dont_map <celltype>\n");
+		log("        leave the given cell type unmapped by ignoring any mapping rules for it\n");
+		log("\n");
 		log("When a module in the map file has the 'techmap_celltype' attribute set, it will\n");
 		log("match cells with a type that match the text value of this attribute. Otherwise\n");
 		log("the module name will be used to match the cell.  Multiple space-separated cell\n");
@@ -1135,6 +1143,10 @@ struct TechmapPass : public Pass {
 		log("new wire alias to be created and named as above but with the `_TECHMAP_REPLACE_'\n");
 		log("prefix also substituted.\n");
 		log("\n");
+		log("A cell with the type _TECHMAP_PLACEHOLDER_ in the map file will have its type\n");
+		log("changed to the content of the techmap_chtype attribute. This allows for choosing\n");
+		log("the cell type dynamically.\n");
+		log("\n");
 		log("See 'help extract' for a pass that does the opposite thing.\n");
 		log("\n");
 		log("See 'help flatten' for a pass that does flatten the design (which is\n");
@@ -1150,6 +1162,7 @@ struct TechmapPass : public Pass {
 		simplemap_get_mappers(worker.simplemap_mappers);
 
 		std::vector<std::string> map_files;
+		std::vector<RTLIL::IdString> dont_map;
 		std::string verilog_frontend = "verilog -nooverwrite -noblackbox";
 		int max_iter = -1;
 
@@ -1191,6 +1204,10 @@ struct TechmapPass : public Pass {
 				worker.ignore_wb = true;
 				continue;
 			}
+			if (args[argidx] == "-dont_map" && argidx+1 < args.size()) {
+				dont_map.push_back(RTLIL::escape_id(args[++argidx]));
+				continue;
+			}
 			break;
 		}
 		extra_args(args, argidx, design);
@@ -1217,7 +1234,7 @@ struct TechmapPass : public Pass {
 
 		dict<IdString, pool<IdString>> celltypeMap;
 		for (auto module : map->modules()) {
-			if (module->attributes.count(ID::techmap_celltype) && !module->attributes.at(ID::techmap_celltype).bits.empty()) {
+			if (module->attributes.count(ID::techmap_celltype) && !module->attributes.at(ID::techmap_celltype).empty()) {
 				char *p = strdup(module->attributes.at(ID::techmap_celltype).decode_string().c_str());
 				for (char *q = strtok(p, " \t\r\n"); q; q = strtok(nullptr, " \t\r\n")) {
 					std::vector<std::string> queue;
@@ -1247,6 +1264,11 @@ struct TechmapPass : public Pass {
 				celltypeMap[module_name].insert(module->name);
 			}
 		}
+
+		// Erase any rules disabled with a -dont_map argument
+		for (auto type : dont_map)
+			celltypeMap.erase(type);
+
 		log_debug("Cell type mappings to use:\n");
 		for (auto &i : celltypeMap) {
 			i.second.sort(RTLIL::sort_by_id_str());

@@ -498,6 +498,11 @@ struct value : public expr_base<value<Bits>> {
 		return result;
 	}
 
+	CXXRTL_ALWAYS_INLINE
+	value<Bits> bwmux(const value<Bits> &b, const value<Bits> &s) const {
+		return (bit_and(s.bit_not())).bit_or(b.bit_and(s));
+	}
+
 	template<size_t ResultBits, size_t SelBits>
 	value<ResultBits> demux(const value<SelBits> &sel) const {
 		static_assert(Bits << SelBits == ResultBits, "invalid sizes used in demux()");
@@ -941,6 +946,55 @@ struct metadata {
 		assert(value_type == DOUBLE);
 		return double_value;
 	}
+
+	// Internal CXXRTL use only.
+	static std::map<std::string, metadata> deserialize(const char *ptr) {
+		std::map<std::string, metadata> result;
+		std::string name;
+		// Grammar:
+		// string   ::= [^\0]+ \0
+		// metadata ::= [uid] .{8} | s <string>
+		// map      ::= ( <string> <metadata> )* \0
+		for (;;) {
+			if (*ptr) {
+				name += *ptr++;
+			} else if (!name.empty()) {
+				ptr++;
+				auto get_u64 = [&]() {
+					uint64_t result = 0;
+					for (size_t count = 0; count < 8; count++)
+						result = (result << 8) | *ptr++;
+					return result;
+				};
+				char type = *ptr++;
+				if (type == 'u') {
+					uint64_t value = get_u64();
+					result.emplace(name, value);
+				} else if (type == 'i') {
+					int64_t value = (int64_t)get_u64();
+					result.emplace(name, value);
+				} else if (type == 'd') {
+					double dvalue;
+					uint64_t uvalue = get_u64();
+					static_assert(sizeof(dvalue) == sizeof(uvalue), "double must be 64 bits in size");
+					memcpy(&dvalue, &uvalue, sizeof(dvalue));
+					result.emplace(name, dvalue);
+				} else if (type == 's') {
+					std::string value;
+					while (*ptr)
+						value += *ptr++;
+					ptr++;
+					result.emplace(name, value);
+				} else {
+					assert(false && "Unknown type specifier");
+					return result;
+				}
+				name.clear();
+			} else {
+				return result;
+			}
+		}
+	}
 };
 
 typedef std::map<std::string, metadata> metadata_map;
@@ -1078,7 +1132,7 @@ struct fmt_part {
 			}
 
 			case UNICHAR: {
-				uint32_t codepoint = val.template get<uint32_t>();
+				uint32_t codepoint = val.template zcast<32>().template get<uint32_t>();
 				if (codepoint >= 0x10000)
 					buf += (char)(0xf0 |  (codepoint >> 18));
 				else if (codepoint >= 0x800)
@@ -1240,6 +1294,7 @@ struct debug_item : ::cxxrtl_object {
 		DRIVEN_SYNC = CXXRTL_DRIVEN_SYNC,
 		DRIVEN_COMB = CXXRTL_DRIVEN_COMB,
 		UNDRIVEN    = CXXRTL_UNDRIVEN,
+		GENERATED = CXXRTL_GENERATED,
 	};
 
 	debug_item(const ::cxxrtl_object &object) : cxxrtl_object(object) {}
@@ -1417,6 +1472,12 @@ struct debug_items {
 			});
 	}
 
+	// This overload exists to reduce excessive stack slot allocation in `CXXRTL_EXTREMELY_COLD void debug_info()`.
+	template<class... T>
+	void add(const std::string &base_path, const char *path, const char *serialized_item_attrs, T&&... args) {
+		add(base_path + path, debug_item(std::forward<T>(args)...), metadata::deserialize(serialized_item_attrs));
+	}
+
 	size_t count(const std::string &path) const {
 		if (table.count(path) == 0)
 			return 0;
@@ -1461,6 +1522,11 @@ struct debug_scopes {
 		scope.module_name = module_name;
 		scope.module_attrs = std::unique_ptr<debug_attrs>(new debug_attrs { module_attrs });
 		scope.cell_attrs = std::unique_ptr<debug_attrs>(new debug_attrs { cell_attrs });
+	}
+
+	// This overload exists to reduce excessive stack slot allocation in `CXXRTL_EXTREMELY_COLD void debug_info()`.
+	void add(const std::string &base_path, const char *path, const char *module_name, const char *serialized_module_attrs, const char *serialized_cell_attrs) {
+		add(base_path + path, module_name, metadata::deserialize(serialized_module_attrs), metadata::deserialize(serialized_cell_attrs));
 	}
 
 	size_t contains(const std::string &path) const {
@@ -1522,7 +1588,7 @@ struct module {
 
 	// Compatibility method.
 #if __has_attribute(deprecated)
-	__attribute__((deprecated("Use `debug_info(path, &items, /*scopes=*/nullptr);` instead. (`path` could be \"top \".)")))
+	__attribute__((deprecated("Use `debug_info(&items, /*scopes=*/nullptr, path);` instead.")))
 #endif
 	void debug_info(debug_items &items, std::string path) {
 		debug_info(&items, /*scopes=*/nullptr, path);
@@ -1704,7 +1770,7 @@ value<BitsY> shr_uu(const value<BitsA> &a, const value<BitsB> &b) {
 template<size_t BitsY, size_t BitsA, size_t BitsB>
 CXXRTL_ALWAYS_INLINE
 value<BitsY> shr_su(const value<BitsA> &a, const value<BitsB> &b) {
-	return a.shr(b).template scast<BitsY>();
+	return a.template scast<BitsY>().shr(b);
 }
 
 template<size_t BitsY, size_t BitsA, size_t BitsB>
@@ -1945,7 +2011,7 @@ std::pair<value<BitsY>, value<BitsY>> divmod_uu(const value<BitsA> &a, const val
 	value<Bits> quotient;
 	value<Bits> remainder;
 	value<Bits> dividend = a.template zext<Bits>();
-	value<Bits> divisor = b.template zext<Bits>();
+	value<Bits> divisor  = b.template trunc<BitsB>().template zext<Bits>();
 	std::tie(quotient, remainder) = dividend.udivmod(divisor);
 	return {quotient.template trunc<BitsY>(), remainder.template trunc<BitsY>()};
 }

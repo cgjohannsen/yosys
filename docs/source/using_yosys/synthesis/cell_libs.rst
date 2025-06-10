@@ -51,10 +51,10 @@ Loading the design
 Our circuit now looks like this:
 
 .. figure:: /_images/code_examples/intro/counter_00.*
-   :class: width-helper
+   :class: width-helper invert-helper
    :name: counter-hierarchy
 
-   ``counter`` after :cmd:ref:`hierarchy`
+   ``counter`` after `hierarchy`
 
 Coarse-grain representation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -66,7 +66,7 @@ Coarse-grain representation
    :caption: :file:`counter.ys` - the high-level stuff
 
 .. figure:: /_images/code_examples/intro/counter_01.*
-   :class: width-helper
+   :class: width-helper invert-helper
 
    Coarse-grain representation of the ``counter`` module
 
@@ -80,9 +80,9 @@ Logic gate mapping
    :caption: :file:`counter.ys` - mapping to internal cell library
 
 .. figure:: /_images/code_examples/intro/counter_02.*
-   :class: width-helper
+   :class: width-helper invert-helper
 
-   ``counter`` after :cmd:ref:`techmap`
+   ``counter`` after `techmap`
 
 Mapping to hardware
 ~~~~~~~~~~~~~~~~~~~
@@ -90,17 +90,19 @@ Mapping to hardware
 For this example, we are using a Liberty file to describe a cell library which
 our internal cell library will be mapped to:
 
+.. todo:: find a Liberty pygments style?
+
 .. literalinclude:: /code_examples/intro/mycells.lib
-   :language: Liberty
+   :language: text
    :linenos:
    :name: mycells-lib
    :caption: :file:`mycells.lib`
 
-Recall that the Yosys built-in logic gate types are ``$_NOT_``, ``$_AND_``,
-``$_OR_``, ``$_XOR_``, and ``$_MUX_`` with an assortment of dff memory types.
+Recall that the Yosys built-in logic gate types are `$_NOT_`, `$_AND_`, `$_OR_`,
+`$_XOR_`, and `$_MUX_` with an assortment of dff memory types.
 :ref:`mycells-lib` defines our target cells as ``BUF``, ``NOT``, ``NAND``,
 ``NOR``, and ``DFF``.  Mapping between these is performed with the commands
-:cmd:ref:`dfflibmap` and :cmd:ref:`abc` as follows:
+`dfflibmap` and `abc` as follows:
 
 .. literalinclude:: /code_examples/intro/counter.ys
    :language: yoscrypt
@@ -111,12 +113,12 @@ Recall that the Yosys built-in logic gate types are ``$_NOT_``, ``$_AND_``,
 The final version of our ``counter`` module looks like this:
 
 .. figure:: /_images/code_examples/intro/counter_03.*
-   :class: width-helper
+   :class: width-helper invert-helper
 
    ``counter`` after hardware cell mapping
 
-Before finally being output as a verilog file with :cmd:ref:`write_verilog`,
-which can then be loaded into another tool:
+Before finally being output as a verilog file with `write_verilog`, which can
+then be loaded into another tool:
 
 .. literalinclude:: /code_examples/intro/counter.ys
    :language: yoscrypt
